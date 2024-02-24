@@ -1,0 +1,12 @@
+import pytest
+import numpy as np
+from audio_analysis import get_embeddings, load_audio 
+
+
+def test_get_loudness(example_audio_file):
+
+    audio, _ = load_audio(example_audio_file)
+    loudness = get_embeddings(audio)
+
+    # assertions
+    assert isinstance(loudness, float)
