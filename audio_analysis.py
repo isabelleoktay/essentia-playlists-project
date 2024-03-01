@@ -4,6 +4,15 @@ import os
 
 
 def get_tempo(mono_audio):
+    """
+    Estimate the tempo of the input mono audio.
+
+    Parameters:
+        mono_audio (numpy.ndarray): Mono audio data.
+
+    Returns:
+        float: Estimated tempo in beats per minute (BPM).
+    """
     try: 
         bpm, _, _, _, _ = es.RhythmExtractor2013()(mono_audio)
         return bpm
@@ -14,6 +23,15 @@ def get_tempo(mono_audio):
 
 
 def get_key(mono_audio):
+    """
+    Determine the key and scale of the input mono audio using different key extraction profiles.
+
+    Parameters:
+        mono_audio (numpy.ndarray): Mono audio data.
+
+    Returns:
+        dict: A dictionary containing key and scale information for different key extraction profiles.
+    """
     keys_and_scales = {'temperley': None,
                        'krumhansl': None,
                        'edma': None}
@@ -30,6 +48,15 @@ def get_key(mono_audio):
 
 
 def get_loudness(stereo_audio):
+    """
+    Calculate the integrated loudness of stereo audio.
+
+    Parameters:
+        stereo_audio (numpy.ndarray): Stereo audio data.
+
+    Returns:
+        float: Integrated loudness value.
+    """
     try:
         _, _, integrated_loudness, _ = es.LoudnessEBUR128()(stereo_audio)
 
@@ -41,6 +68,15 @@ def get_loudness(stereo_audio):
 
 
 def get_embeddings(mono_audio):
+    """
+    Generate embeddings for audio samples using two different models.
+
+    Parameters:
+        mono_audio (numpy.ndarray): Mono audio data.
+
+    Returns:
+        tuple: A tuple containing Discogs embeddings and MusiCNN embeddings.
+    """
     discogs_embeddings = None
     musiCNN_embeddings = None
 
@@ -60,6 +96,15 @@ def get_embeddings(mono_audio):
 
 
 def get_music_styles(discogs_embeddings):
+    """
+    Predict the music styles based on Discogs embeddings.
+
+    Parameters:
+        discogs_embeddings (numpy.ndarray): Discogs embeddings for audio samples.
+
+    Returns:
+        numpy.ndarray: Mean predictions for music styles.
+    """
     try:
         discogs_model = es.TensorflowPredict2D(graphFilename="models/genre_discogs400-discogs-effnet-1.pb", input="serving_default_model_Placeholder", output="PartitionedCall:0")
         discogs_predictions = discogs_model(discogs_embeddings)
@@ -73,6 +118,15 @@ def get_music_styles(discogs_embeddings):
 
 
 def classify_voice_or_instrument(discogs_embeddings):
+    """
+    Classify whether the audio contains voice or instrumental music based on Discogs embeddings.
+
+    Parameters:
+        discogs_embeddings (numpy.ndarray): Discogs embeddings for audio samples.
+
+    Returns:
+        numpy.ndarray: Mean predictions for voice or instrumental classification.
+    """
     try:
         discogs_model = es.TensorflowPredict2D(graphFilename="models/voice_instrumental-discogs-effnet-1.pb", output="model/Softmax")
         discogs_predictions = discogs_model(discogs_embeddings)
@@ -86,9 +140,18 @@ def classify_voice_or_instrument(discogs_embeddings):
 
  
 def get_danceability(discogs_embeddings):
+    """
+    Calculate the mean danceability predictions from Discogs embeddings.
+
+    Parameters:
+        discogs_embeddings (numpy.ndarray): Discogs embeddings for audio samples.
+
+    Returns:
+        numpy.ndarray: Mean danceability predictions.
+    """
     try:
         discogs_model = es.TensorflowPredict2D(graphFilename="models/danceability-discogs-effnet-1.pb", output="model/Softmax")
-        discogs_predictions = discogs_model(discogs_embeddings)
+        discogs_predictions = np.array(discogs_model(discogs_embeddings))
         discogs_mean_predictions = np.mean(discogs_predictions, axis=0)
 
         return discogs_mean_predictions
@@ -99,6 +162,15 @@ def get_danceability(discogs_embeddings):
 
 
 def get_arousal_and_valence(musiCNN_embeddings):
+    """
+    Calculate the mean arousal and valence predictions from MusiCNN embeddings.
+
+    Parameters:
+        musiCNN_embeddings (numpy.ndarray): MusiCNN embeddings for audio samples.
+
+    Returns:
+        numpy.ndarray: Mean arousal and valence predictions.
+    """
     try:
         musiCNN_model = es.TensorflowPredict2D(graphFilename="models/emomusic-msd-musicnn-2.pb", output="model/Identity")
         musiCNN_predictions = musiCNN_model(musiCNN_embeddings)
@@ -112,11 +184,22 @@ def get_arousal_and_valence(musiCNN_embeddings):
 
 
 def load_audio(filename):
+    """
+    Load stereo audio and converts it to mono if stereo audio is available.
+
+    Parameters:
+        filename (str): The path to the audio file.
+
+    Returns:
+        tuple: A tuple containing the stereo audio and the mono audio.
+    """
     stereo_audio = None
     mono_audio = None
+    resampled_mono_audio = None
+    sr = None
 
     try:
-        stereo_audio, _, num_channels, _, _, _ = es.AudioLoader(filename=filename)()
+        stereo_audio, sr, num_channels, _, _, _ = es.AudioLoader(filename=filename)()
     except Exception as e:
         print(f"Error in loading stereo audio: {e}")
 
@@ -126,43 +209,47 @@ def load_audio(filename):
     except Exception as e:
         print(f"Error in converting stereo to mono: {e}")
 
-    return stereo_audio, mono_audio
+    try: 
+        resampled_mono_audio = es.Resample(inputSampleRate=float(sr), outputSampleRate=float(16000), quality=1).compute(mono_audio)
+    except Exception as e:
+        print(f"Error in resampling mono audio: {e}")
+
+    return stereo_audio, mono_audio, resampled_mono_audio, sr
 
 
-def process_audio_files(directory):
-    results = []
-    
-    for root, _, files in os.walk(directory):
+def compile_audio_files(data_home):
+    """
+    Search through a specified directory and its subdirectories to compile a list of audio files. 
+    Supported audio file formats include .wav, .mp3, .ogg, .flac, and .aac.
+
+    Parameters:
+        data_home (str): The path to the directory where audio files will be searched.
+
+    Returns:
+        list: A list containing the absolute paths of all audio files found within the specified directory and its subdirectories.
+    """
+    audio_files = []
+    for root, _, files in os.walk(data_home):
         for file in files:
-            if file.endswith(('.wav', '.mp3', '.ogg')):  
+            if file.endswith(('.wav', '.mp3', '.ogg', '.flac', '.aac')):  
                 audio_file = os.path.join(root, file)
-                stereo_audio, mono_audio = load_audio(audio_file)
+                audio_files.append(audio_file)
+    return audio_files
 
-                tempo = get_tempo(mono_audio)
-                key = get_key(mono_audio)
-                loudness = get_loudness(stereo_audio)
 
-                discogs_embeddings, musiCNN_embeddings = get_embeddings(mono_audio)
-                music_styles = get_music_styles(discogs_embeddings)
-                voice_or_instrument = classify_voice_or_instrument(discogs_embeddings)
-                danceability = get_danceability(discogs_embeddings)
-                arousal_and_valence = get_arousal_and_valence(musiCNN_embeddings)
+def convert_numpy_to_list(obj):
+    """
+    Recursively convert NumPy arrays to lists within a nested dictionary.
 
-                audio_data = {
-                    'audio_file': audio_file,
-                    'stereo_audio': stereo_audio,
-                    'mono_audio': mono_audio,
-                    'discogs_embeddings': discogs_embeddings,
-                    'musiCNN_embeddings': musiCNN_embeddings,
-                    'tempo': tempo,
-                    'key': key,
-                    'loudness': loudness,
-                    'music_styles': music_styles,
-                    'voice_or_instrument': voice_or_instrument,
-                    'danceability': danceability,
-                    'arousal_and_valence': arousal_and_valence
+    Parameters:
+        obj (object): The input object to be converted. Can be a NumPy array, a dictionary, or any other object.
 
-                }
-                results.append(audio_data)
-
-    return results
+    Returns:
+        object: The converted object with NumPy arrays replaced by lists.
+    """
+    if isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_to_list(value) for key, value in obj.items()}
+    else:
+        return obj

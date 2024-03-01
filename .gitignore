@@ -1,0 +1,10 @@
+.DS_Store
+.history/
+test.ipynb
+data/*
+playlists/descriptor_playlists/*
+playlists/similarities_playlists/*
+__pycache__/*
+analysis/*
+embeddings/*
+predictions/*
